@@ -57,40 +57,64 @@ class PDFQuizSystem:
         """Generate multiple choice questions from the text"""
         chunks = [context[i:i + 512] for i in range(0, len(context), 512)]
         questions = []
+        attempts = 0
+        max_attempts = num_questions * 2  # Allow more attempts to reach desired question count
 
         progress_text = st.empty()
         progress_bar = st.progress(0)
 
-        for i, chunk in enumerate(chunks):
-            if len(questions) >= num_questions:
-                break
-
+        while len(questions) < num_questions and attempts < max_attempts:
             try:
+                # Update progress
                 progress_text.text(f"Generating question {len(questions) + 1} of {num_questions}")
-                progress_bar.progress((len(questions)) / num_questions)
+                progress_bar.progress(len(questions) / num_questions)
 
+                # Get a chunk, cycling through if needed
+                chunk_index = attempts % len(chunks)
+                chunk = chunks[chunk_index]
+
+                # Generate question
                 question = {
                     "question": f"What is the main point discussed in: '{chunk[:100]}...'?",
                     "context": chunk
                 }
 
                 answer = self.qa_pipeline(question)
-                distractors = self.generate_distractors(chunk, answer['answer'])
-                options = [answer['answer']] + distractors
-                np.random.shuffle(options)
 
-                questions.append({
-                    "question": question["question"],
-                    "options": options,
-                    "correct_answer": answer['answer']
-                })
+                # Only proceed if we get a meaningful answer
+                if len(answer['answer'].strip()) > 10:
+                    distractors = self.generate_distractors(chunk, answer['answer'])
+
+                    # Only add question if we got valid distractors
+                    if len(distractors) == 3:  # We want exactly 3 distractors
+                        options = [answer['answer']] + distractors
+                        np.random.shuffle(options)
+
+                        questions.append({
+                            "question": question["question"],
+                            "options": options,
+                            "correct_answer": answer['answer']
+                        })
 
             except Exception as e:
                 st.error(f"Error generating question: {str(e)}")
-                continue
 
+            attempts += 1
+
+        # Ensure we have exactly the number of questions requested
+        if len(questions) > num_questions:
+            questions = questions[:num_questions]
+
+        # Final progress update
+        progress_bar.progress(1.0)
+        progress_text.text(f"Generated {len(questions)} questions")
+        time.sleep(0.5)  # Brief pause to show completion
         progress_bar.empty()
         progress_text.empty()
+
+        if len(questions) < num_questions:
+            st.warning(f"Could only generate {len(questions)} quality questions from the provided content.")
+
         return questions
 
     def generate_distractors(self, context, correct_answer, num_distractors=3):
